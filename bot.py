@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 import os
 import logging
 from datetime import datetime
-from crawlers import crawl_all_new, SupportPost
+from crawlers import (
+    crawl_all_new, crawl_startupplus, SupportPost,
+    filter_for_pre_startup, sort_by_deadline, calc_idea_relevance,
+)
 
 # 로깅 설정
 logging.basicConfig(
@@ -40,6 +43,7 @@ SOURCE_COLORS = {
     "K-Startup": 0x3498DB,     # 파랑
     "중기부 기술개발": 0xE74C3C,  # 빨강
     "서울산업진흥원": 0xF39C12,   # 주황
+    "스타트업플러스": 0x9B59B6,   # 보라
 }
 
 # ── 우리 아이디어 매칭 키워드 ──
@@ -232,6 +236,112 @@ async def manual_crawl(ctx):
         await ctx.send(f"... 외 {len(new_posts) - 20}건")
 
 
+@bot.command(name="맞춤")
+async def custom_search(ctx):
+    """예비창업자 맞춤 지원사업 검색: !맞춤"""
+    await ctx.send("🔍 예비창업자 맞춤 지원사업을 검색합니다...")
+
+    import aiohttp
+    from crawlers import crawl_bizinfo, crawl_kstartup, crawl_smtech, crawl_sba
+    all_posts = []
+    async with aiohttp.ClientSession() as session:
+        for crawler in [crawl_startupplus, crawl_bizinfo, crawl_kstartup, crawl_smtech, crawl_sba]:
+            try:
+                posts = await crawler(session)
+                all_posts.extend(posts)
+            except Exception as e:
+                logger.error(f"Crawler error ({crawler.__name__}): {e}")
+
+    if not all_posts:
+        await ctx.send("❌ 데이터를 불러오지 못했습니다.")
+        return
+
+    # 예비창업자 필터 → 마감순 정렬
+    filtered = filter_for_pre_startup(all_posts)
+    sorted_posts = sort_by_deadline(filtered)
+
+    if not sorted_posts:
+        await ctx.send("현재 예비창업자 대상 지원사업이 없습니다.")
+        return
+
+    # 헤더 임베드
+    header = discord.Embed(
+        title="🎯 예비창업자 맞춤 지원사업",
+        description=(
+            "**조건**: 사업자등록증·사무실 없는 예비창업자 대상\n"
+            "**정렬**: 마감 임박순\n"
+            f"**검색 결과**: 전체 {len(all_posts)}건 중 **{len(sorted_posts)}건** 해당"
+        ),
+        color=0xFFD700,
+    )
+    header.set_footer(text=f"검색 시각: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    await ctx.send(embed=header)
+
+    # 최대 15건 표시
+    for i, post in enumerate(sorted_posts[:15], 1):
+        relevance = calc_idea_relevance(post)
+        stars = "⭐" * min(relevance, 5) if relevance > 0 else "—"
+
+        # 마감까지 남은 일수 계산
+        d_day = ""
+        if post.deadline:
+            try:
+                dl = datetime.strptime(post.deadline, "%Y-%m-%d %H:%M")
+                days_left = (dl - datetime.now()).days
+                if days_left == 0:
+                    d_day = "🔴 오늘 마감!"
+                elif days_left <= 3:
+                    d_day = f"🔴 D-{days_left}"
+                elif days_left <= 7:
+                    d_day = f"🟡 D-{days_left}"
+                else:
+                    d_day = f"🟢 D-{days_left}"
+            except ValueError:
+                pass
+
+        # 색상: 관련도에 따라
+        if relevance >= 3:
+            color = 0xFFD700  # 골드
+        elif relevance >= 1:
+            color = 0x3498DB  # 파랑
+        else:
+            color = 0x95A5A6  # 회색
+
+        embed = discord.Embed(
+            title=f"{i}. {post.title}"[:256],
+            url=post.url if post.url else None,
+            color=color,
+        )
+
+        # 핵심 정보 필드
+        embed.add_field(name="📅 접수 마감", value=f"{post.deadline or '미정'}\n{d_day}", inline=True)
+        embed.add_field(name="🏢 주관기관", value=post.organization or "—", inline=True)
+        embed.add_field(name="📌 상태", value=post.status or "—", inline=True)
+
+        if post.category:
+            embed.add_field(name="📂 분류", value=post.category, inline=True)
+        if post.target:
+            embed.add_field(name="🎯 대상", value=post.target, inline=True)
+
+        # 결과 발표일
+        embed.add_field(
+            name="📢 결과 발표",
+            value=post.result_date if post.result_date else "공고문 확인 필요",
+            inline=True,
+        )
+
+        # 관련도
+        embed.add_field(name="💡 AI광고 플랫폼 관련도", value=stars, inline=False)
+
+        if post.receipt_begin:
+            embed.set_footer(text=f"접수 시작: {post.receipt_begin}")
+
+        await ctx.send(embed=embed)
+
+    if len(sorted_posts) > 15:
+        await ctx.send(f"... 외 **{len(sorted_posts) - 15}건**이 더 있습니다.")
+
+
 @bot.command(name="상태")
 async def status(ctx):
     """봇 상태 확인: !상태"""
@@ -242,7 +352,7 @@ async def status(ctx):
     embed.add_field(name="누적 수집 건수", value=f"{len(seen)}건", inline=True)
     embed.add_field(
         name="크롤링 대상",
-        value="기업마당, K-Startup, 중기부 기술개발, 서울산업진흥원",
+        value="기업마당, K-Startup, 중기부 기술개발, 서울산업진흥원, 스타트업플러스",
         inline=False,
     )
     await ctx.send(embed=embed)
