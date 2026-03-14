@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from crawlers import (
     crawl_all_new, crawl_startupplus, SupportPost,
-    filter_for_pre_startup, sort_by_deadline, calc_idea_relevance,
+    filter_for_pre_startup, sort_by_deadline, sort_by_relevance, calc_idea_relevance,
 )
 
 # 로깅 설정
@@ -256,9 +256,9 @@ async def custom_search(ctx):
         await ctx.send("❌ 데이터를 불러오지 못했습니다.")
         return
 
-    # 예비창업자 필터 → 마감순 정렬
+    # 예비창업자 필터 → 중요도순 정렬 (같은 점수면 마감 임박순)
     filtered = filter_for_pre_startup(all_posts)
-    sorted_posts = sort_by_deadline(filtered)
+    sorted_posts = sort_by_relevance(filtered)
 
     if not sorted_posts:
         await ctx.send("현재 예비창업자 대상 지원사업이 없습니다.")
@@ -269,7 +269,7 @@ async def custom_search(ctx):
         title="🎯 예비창업자 맞춤 지원사업",
         description=(
             "**조건**: 사업자등록증·사무실 없는 예비창업자 대상\n"
-            "**정렬**: 마감 임박순\n"
+            "**정렬**: 중요도순 (관련도 높은 순 → 마감 임박순)\n"
             f"**검색 결과**: 전체 {len(all_posts)}건 중 **{len(sorted_posts)}건** 해당"
         ),
         color=0xFFD700,

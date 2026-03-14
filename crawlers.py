@@ -393,6 +393,29 @@ def calc_idea_relevance(post: SupportPost) -> int:
     return score
 
 
+def sort_by_relevance(posts: List[SupportPost]) -> List[SupportPost]:
+    """중요도순 정렬: 관련도 높은 순 → 같은 점수면 마감 임박순 (마감 지난 건 제외)"""
+    now = datetime.now()
+    scored = []
+    for post in posts:
+        relevance = calc_idea_relevance(post)
+        # 마감일 파싱
+        try:
+            dl = datetime.strptime(post.deadline, "%Y-%m-%d %H:%M")
+            if dl < now:
+                continue  # 마감 지난 건 제외
+            deadline_dt = dl
+        except (ValueError, TypeError):
+            if post.deadline:
+                continue  # 파싱 불가한 마감일은 제외
+            deadline_dt = datetime.max
+
+        scored.append((-relevance, deadline_dt, post))
+
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [p for _, _, p in scored]
+
+
 def sort_by_deadline(posts: List[SupportPost]) -> List[SupportPost]:
     """마감일 임박순 정렬 (마감 지난 건 제외)"""
     now = datetime.now()
